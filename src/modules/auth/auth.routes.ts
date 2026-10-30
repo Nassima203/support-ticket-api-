@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { Role } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
-import { verifyPassword } from "../../lib/password";
+import { hashPassword, verifyPassword } from "../../lib/password";
 import { generateToken, hashToken, refreshTokenExpiry, signAccessToken } from "../../lib/tokens";
 import { authenticate } from "../../middlewares/authenticate";
 import { loginLimiter } from "../../middlewares/rate-limit";
@@ -117,6 +117,45 @@ authRouter.post("/logout", async (req: Request, res: Response) => {
   });
 
   res.status(204).end();
+});
+
+// Accepter une invitation et choisir son mot de passe : POST /auth/accept-invitation
+authRouter.post("/accept-invitation", async (req: Request, res: Response) => {
+  const { token, password } = req.body ?? {};
+
+  if (!token || typeof token !== "string") {
+    res.status(400).json({ error: "token est obligatoire" });
+    return;
+  }
+
+  if (typeof password !== "string" || password.length < 8) {
+    res.status(400).json({ error: "Le mot de passe doit faire au moins 8 caractères" });
+    return;
+  }
+
+  const invitation = await prisma.invitation.findUnique({
+    where: { tokenHash: hashToken(token) },
+  });
+
+  // Même message pour un jeton faux, déjà utilisé ou expiré
+  if (!invitation || invitation.usedAt || invitation.expiresAt < new Date()) {
+    res.status(400).json({ error: "Invitation invalide ou expirée" });
+    return;
+  }
+
+  // Les deux modifications réussissent ensemble ou échouent ensemble
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: invitation.userId },
+      data: { passwordHash: await hashPassword(password) },
+    }),
+    prisma.invitation.update({
+      where: { id: invitation.id },
+      data: { usedAt: new Date() },
+    }),
+  ]);
+
+  res.json({ message: "Mot de passe enregistré, tu peux te connecter" });
 });
 
 // Voir son propre compte : GET /auth/me
