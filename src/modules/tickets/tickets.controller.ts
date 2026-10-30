@@ -16,7 +16,7 @@ function isStatus(value: unknown): value is TicketStatus {
 export async function create(req: Request, res: Response) {
   const { title, description } = req.body ?? {};
 
-  if (!title || !description) {
+  if (typeof title !== "string" || !title || typeof description !== "string" || !description) {
     throw new HttpError(400, "title et description sont obligatoires");
   }
 
