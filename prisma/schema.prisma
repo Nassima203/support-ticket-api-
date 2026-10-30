@@ -26,3 +26,71 @@ model Ticket {
   @@index([status])
   @@map("tickets")
 }
+
+// Les 4 rôles, du plus puissant au moins puissant
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  AGENT
+  USER
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  name         String?
+  // Vide tant que la personne n'a pas accepté son invitation
+  passwordHash String?
+  role         Role     @default(USER)
+  // false = compte désactivé, la personne ne peut plus se connecter
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  invitations         Invitation[]
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+
+  @@map("users")
+}
+
+// Invitation envoyée par email : valable 48 h, utilisable une seule fois
+model Invitation {
+  id        Int       @id @default(autoincrement())
+  // Empreinte du jeton : le jeton lui-même n'est jamais stocké
+  tokenHash String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@map("invitations")
+}
+
+// Session de connexion : révoquée à la déconnexion ou quand elle est renouvelée
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  tokenHash String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// Lien « mot de passe oublié » : valable 1 h, utilisable une seule fois
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  tokenHash String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@map("password_reset_tokens")
+}
