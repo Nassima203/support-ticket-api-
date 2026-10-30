@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma";
 import { sendEmail } from "../../lib/mailer";
 import { invitationEmail } from "../../lib/emails";
 import { generateToken, hashToken } from "../../lib/tokens";
+import { normalizeEmail } from "../../lib/normalize-email";
 import { authenticate } from "../../middlewares/authenticate";
 import { authorize } from "../../middlewares/authorize";
 
@@ -65,7 +66,8 @@ async function sendInvitation(userId: number, email: string) {
 
 // Créer un utilisateur et l'inviter : POST /users
 usersRouter.post("/", async (req: Request, res: Response) => {
-  const { email, name, role } = req.body ?? {};
+  const { name, role } = req.body ?? {};
+  const email = normalizeEmail(req.body?.email);
 
   if (!isEmail(email)) {
     res.status(400).json({ error: "Un email valide est obligatoire" });
