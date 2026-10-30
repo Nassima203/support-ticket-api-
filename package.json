@@ -4,12 +4,13 @@
   "description": "REST API for support tickets, Node.js, Express, TypeScript, PostgreSQL, Prisma",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
-  },
+  "dev": "tsx watch src/index.ts",
+  "build": "tsc",
+  "start": "node dist/index.js",
+  "db:migrate": "prisma migrate dev",
+  "db:studio": "prisma studio",
+  "db:seed": "tsx prisma/seed.ts"
+},
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Nassima203/support-ticket-api-.git"
