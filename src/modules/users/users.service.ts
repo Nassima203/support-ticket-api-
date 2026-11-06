@@ -7,6 +7,7 @@ import { HttpError } from "../../lib/http-error";
 import { pageArgs, pageResult } from "../../lib/pagination";
 import { CurrentUser } from "../../types/current-user";
 import { ListUsersQuery } from "./users.schemas";
+import { recordAudit } from "../audit/audit.service";
 
 const INVITATION_HOURS = 48;
 
@@ -21,7 +22,7 @@ const userFields = {
 } as const;
 
 // Un ADMIN ne gère que les AGENT et les USER. Le SUPER_ADMIN gère tout le monde sauf un autre SUPER_ADMIN.
-function canManage(managerRole: Role, targetRole: Role): boolean {
+export function canManage(managerRole: Role, targetRole: Role): boolean {
   if (targetRole === "SUPER_ADMIN") return false;
   if (managerRole === "SUPER_ADMIN") return true;
   return targetRole === "AGENT" || targetRole === "USER";
@@ -53,9 +54,15 @@ export async function createUser(manager: CurrentUser, email: string, name: stri
   if (existing) throw new HttpError(409, "Un compte existe déjà avec cet email");
 
   // Compte créé sans mot de passe : la personne le choisira en acceptant l'invitation
-  const user = await prisma.user.create({
-    data: { email, name, role },
-    select: userFields,
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: { email, name, role },
+      select: userFields,
+    });
+
+    await recordAudit(tx, { action: "USER_CREATED", actorId: manager.id, targetUserId: created.id, details: { role } });
+
+    return created;
   });
 
   await sendInvitation(user.id, user.email);
@@ -113,7 +120,12 @@ async function findManageableUser(manager: CurrentUser, id: number) {
 
 // Désactiver ou réactiver un compte
 export async function setUserActive(manager: CurrentUser, id: number, isActive: boolean) {
-  await findManageableUser(manager, id);
+  const target = await findManageableUser(manager, id);
+
+  // Déjà dans l'état demandé : rien à changer, rien à enregistrer
+  if (target.isActive === isActive) {
+    return prisma.user.findUniqueOrThrow({ where: { id }, select: userFields });
+  }
 
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.update({
@@ -130,20 +142,42 @@ export async function setUserActive(manager: CurrentUser, id: number, isActive: 
       });
     }
 
+    await recordAudit(tx, {
+      action: isActive ? "USER_REACTIVATED" : "USER_DEACTIVATED",
+      actorId: manager.id,
+      targetUserId: id,
+    });
+
     return user;
   });
 }
 
 // Changer le rôle d'un compte
 export async function changeUserRole(manager: CurrentUser, id: number, role: Role) {
-  await findManageableUser(manager, id);
+  const target = await findManageableUser(manager, id);
 
   // Un ADMIN ne peut pas non plus donner un rôle qu'il ne gère pas (par exemple ADMIN)
   if (!canManage(manager.role, role)) throw new HttpError(403, "Tu ne peux pas donner ce rôle");
 
-  return prisma.user.update({
-    where: { id },
-    data: { role },
-    select: userFields,
+  // Déjà ce rôle : rien à changer, rien à enregistrer
+  if (target.role === role) {
+    return prisma.user.findUniqueOrThrow({ where: { id }, select: userFields });
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.update({
+      where: { id },
+      data: { role },
+      select: userFields,
+    });
+
+    await recordAudit(tx, {
+      action: "ROLE_CHANGED",
+      actorId: manager.id,
+      targetUserId: id,
+      details: { from: target.role, to: role },
+    });
+
+    return user;
   });
 }

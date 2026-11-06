@@ -54,6 +54,8 @@ model User {
   invitations         Invitation[]
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
+  auditLogsDone       AuditLog[]           @relation("AuditActor")
+  auditLogsReceived   AuditLog[]           @relation("AuditTarget")
 
   @@map("users")
 }
@@ -97,4 +99,32 @@ model PasswordResetToken {
   createdAt DateTime  @default(now())
 
   @@map("password_reset_tokens")
+}
+
+// Actions sensibles enregistrées dans le journal d'audit
+enum AuditAction {
+  USER_CREATED
+  USER_DEACTIVATED
+  USER_REACTIVATED
+  ROLE_CHANGED
+  PASSWORD_RESET
+}
+
+// Journal d'audit : une ligne par action sensible, jamais modifiée ni supprimée par l'API
+model AuditLog {
+  id           Int         @id @default(autoincrement())
+  action       AuditAction
+  // Qui a fait l'action
+  actorId      Int?
+  actor        User?       @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  // Le compte concerné
+  targetUserId Int?
+  targetUser   User?       @relation("AuditTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  // Détails utiles, par exemple { "from": "USER", "to": "AGENT" } pour un changement de rôle
+  details      Json?
+  createdAt    DateTime    @default(now())
+
+  @@index([targetUserId])
+  @@index([createdAt])
+  @@map("audit_logs")
 }

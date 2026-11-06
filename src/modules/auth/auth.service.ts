@@ -5,6 +5,7 @@ import { generateToken, hashToken, refreshTokenExpiry, signAccessToken } from ".
 import { sendEmail } from "../../lib/mailer";
 import { passwordResetEmail } from "../../lib/emails";
 import { HttpError } from "../../lib/http-error";
+import { recordAudit } from "../audit/audit.service";
 
 const RESET_TOKEN_MINUTES = 60;
 
@@ -169,6 +170,9 @@ export async function resetPassword(token: string, password: string) {
       where: { userId: resetToken.userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+
+    // La personne a agi sur son propre compte : elle est à la fois l'auteur et la cible
+    await recordAudit(tx, { action: "PASSWORD_RESET", actorId: resetToken.userId, targetUserId: resetToken.userId });
 
     return true;
   });
