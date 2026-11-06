@@ -1,0 +1,51 @@
+# Lance le type-check et tous les tests à chaque push et à chaque pull request
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Base PostgreSQL dédiée aux tests, la même version que docker-compose.yml
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: support_tickets_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/support_tickets_test?schema=public
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Installer les librairies
+        run: npm ci
+
+      - name: Générer le client Prisma
+        run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+
+      - name: Vérifier les types
+        run: npm run typecheck
+
+      - name: Lancer les tests
+        run: npm test
