@@ -1,33 +1,13 @@
 import { Request, Response } from "express";
-import { Role } from "@prisma/client";
-import { HttpError } from "../../lib/http-error";
-import { normalizeEmail } from "../../lib/normalize-email";
 import { parseId } from "../../lib/parse-id";
+import { validate } from "../../lib/validate";
 import * as usersService from "./users.service";
-
-// Rôles qu'on peut donner par l'API (le SUPER_ADMIN n'est créé que par le seed)
-const ASSIGNABLE_ROLES: Role[] = ["ADMIN", "AGENT", "USER"];
-const invalidRole = `Rôle invalide. Valeurs possibles : ${ASSIGNABLE_ROLES.join(", ")}`;
-
-// Vérification simple du format d'un email
-function isEmail(value: unknown): value is string {
-  return typeof value === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
+import { changeRoleSchema, createUserSchema, setStatusSchema } from "./users.schemas";
 
 // POST /users
 export async function create(req: Request, res: Response) {
-  const { name, role } = req.body ?? {};
-  const email = normalizeEmail(req.body?.email);
-
-  if (!isEmail(email)) {
-    throw new HttpError(400, "Un email valide est obligatoire");
-  }
-
-  if (!ASSIGNABLE_ROLES.includes(role)) {
-    throw new HttpError(400, invalidRole);
-  }
-
-  const user = await usersService.createUser(req.user!, email, typeof name === "string" ? name : null, role);
+  const { email, name, role } = validate(createUserSchema, req.body ?? {});
+  const user = await usersService.createUser(req.user!, email, name ?? null, role);
   res.status(201).json(user);
 }
 
@@ -47,12 +27,7 @@ export async function resendInvitation(req: Request, res: Response) {
 // PATCH /users/:id/status
 export async function setStatus(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  const { isActive } = req.body ?? {};
-
-  if (typeof isActive !== "boolean") {
-    throw new HttpError(400, "isActive doit être true ou false");
-  }
-
+  const { isActive } = validate(setStatusSchema, req.body ?? {});
   const user = await usersService.setUserActive(req.user!, id, isActive);
   res.json(user);
 }
@@ -60,12 +35,7 @@ export async function setStatus(req: Request, res: Response) {
 // PATCH /users/:id/role
 export async function changeRole(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  const { role } = req.body ?? {};
-
-  if (!ASSIGNABLE_ROLES.includes(role)) {
-    throw new HttpError(400, invalidRole);
-  }
-
+  const { role } = validate(changeRoleSchema, req.body ?? {});
   const user = await usersService.changeUserRole(req.user!, id, role);
   res.json(user);
 }

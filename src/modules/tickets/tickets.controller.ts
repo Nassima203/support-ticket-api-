@@ -1,37 +1,19 @@
 import { Request, Response } from "express";
-import { TicketStatus } from "@prisma/client";
-import { HttpError } from "../../lib/http-error";
 import { parseId } from "../../lib/parse-id";
+import { validate } from "../../lib/validate";
 import * as ticketsService from "./tickets.service";
-
-// Liste des statuts autorisés : OPEN, IN_PROGRESS, RESOLVED, CLOSED
-const STATUSES = Object.values(TicketStatus);
-const invalidStatus = `Statut invalide. Valeurs possibles : ${STATUSES.join(", ")}`;
-
-function isStatus(value: unknown): value is TicketStatus {
-  return STATUSES.includes(value as TicketStatus);
-}
+import { createTicketSchema, listTicketsQuerySchema, updateStatusSchema } from "./tickets.schemas";
 
 // POST /tickets
 export async function create(req: Request, res: Response) {
-  const { title, description } = req.body ?? {};
-
-  if (typeof title !== "string" || !title || typeof description !== "string" || !description) {
-    throw new HttpError(400, "title et description sont obligatoires");
-  }
-
+  const { title, description } = validate(createTicketSchema, req.body ?? {});
   const ticket = await ticketsService.createTicket(req.user!, title, description);
   res.status(201).json(ticket);
 }
 
 // GET /tickets (filtre optionnel ?status=OPEN)
 export async function list(req: Request, res: Response) {
-  const { status } = req.query;
-
-  if (status !== undefined && !isStatus(status)) {
-    throw new HttpError(400, invalidStatus);
-  }
-
+  const { status } = validate(listTicketsQuerySchema, req.query);
   const tickets = await ticketsService.listTickets(req.user!, status);
   res.json(tickets);
 }
@@ -46,10 +28,7 @@ export async function getOne(req: Request, res: Response) {
 // PATCH /tickets/:id/status
 export async function updateStatus(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  const { status } = req.body ?? {};
-
-  if (!isStatus(status)) throw new HttpError(400, invalidStatus);
-
+  const { status } = validate(updateStatusSchema, req.body ?? {});
   const ticket = await ticketsService.updateTicketStatus(id, status);
   res.json(ticket);
 }
