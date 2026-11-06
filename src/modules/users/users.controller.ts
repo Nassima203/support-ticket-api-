@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { parseId } from "../../lib/parse-id";
 import { validate } from "../../lib/validate";
 import * as usersService from "./users.service";
-import { changeRoleSchema, createUserSchema, setStatusSchema } from "./users.schemas";
+import { changeRoleSchema, createUserSchema, listUsersQuerySchema, setStatusSchema } from "./users.schemas";
 
 // POST /users
 export async function create(req: Request, res: Response) {
@@ -12,9 +12,9 @@ export async function create(req: Request, res: Response) {
 }
 
 // GET /users
-export async function list(_req: Request, res: Response) {
-  const users = await usersService.listUsers();
-  res.json(users);
+export async function list(req: Request, res: Response) {
+  const query = validate(listUsersQuerySchema, req.query);
+  res.json(await usersService.listUsers(query));
 }
 
 // POST /users/:id/resend-invitation

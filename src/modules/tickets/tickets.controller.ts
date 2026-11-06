@@ -11,11 +11,10 @@ export async function create(req: Request, res: Response) {
   res.status(201).json(ticket);
 }
 
-// GET /tickets (filtre optionnel ?status=OPEN)
+// GET /tickets (filtres, pagination et tri dans la query)
 export async function list(req: Request, res: Response) {
-  const { status } = validate(listTicketsQuerySchema, req.query);
-  const tickets = await ticketsService.listTickets(req.user!, status);
-  res.json(tickets);
+  const query = validate(listTicketsQuerySchema, req.query);
+  res.json(await ticketsService.listTickets(req.user!, query));
 }
 
 // GET /tickets/:id

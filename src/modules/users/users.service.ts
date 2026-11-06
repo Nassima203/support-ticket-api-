@@ -1,10 +1,12 @@
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { sendEmail } from "../../lib/mailer";
 import { invitationEmail } from "../../lib/emails";
 import { generateToken, hashToken } from "../../lib/tokens";
 import { HttpError } from "../../lib/http-error";
+import { pageArgs, pageResult } from "../../lib/pagination";
 import { CurrentUser } from "../../types/current-user";
+import { ListUsersQuery } from "./users.schemas";
 
 const INVITATION_HOURS = 48;
 
@@ -61,22 +63,29 @@ export async function createUser(manager: CurrentUser, email: string, name: stri
   return user;
 }
 
-export async function listUsers() {
-  const users = await prisma.user.findMany({
-    orderBy: { createdAt: "asc" },
-    select: { ...userFields, passwordHash: true },
-  });
+export async function listUsers(query: ListUsersQuery) {
+  const where: Prisma.UserWhereInput = {
+    ...(query.role ? { role: query.role } : {}),
+    ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+  };
+
+  const [users, total] = await prisma.$transaction([
+    prisma.user.findMany({
+      where,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { ...userFields, passwordHash: true },
+      ...pageArgs(query),
+    }),
+    prisma.user.count({ where }),
+  ]);
 
   // On remplace l'empreinte du mot de passe par une simple information : invitation acceptée ou non
-  return users.map((user) => ({
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    role: user.role,
-    isActive: user.isActive,
-    createdAt: user.createdAt,
-    invitationPending: user.passwordHash === null,
+  const data = users.map(({ passwordHash, ...user }) => ({
+    ...user,
+    invitationPending: passwordHash === null,
   }));
+
+  return pageResult(data, total, query);
 }
 
 export async function resendInvitation(manager: CurrentUser, id: number) {

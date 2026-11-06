@@ -1,7 +1,9 @@
-import { TicketStatus } from "@prisma/client";
+import { Prisma, TicketStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../lib/http-error";
+import { pageArgs, pageResult } from "../../lib/pagination";
 import { CurrentUser } from "../../types/current-user";
+import { ListTicketsQuery } from "./tickets.schemas";
 
 // Ce qu'on renvoie de l'auteur d'un ticket (jamais son mot de passe)
 const authorFields = { select: { id: true, email: true, name: true } };
@@ -15,17 +17,36 @@ export function createTicket(user: CurrentUser, title: string, description: stri
 }
 
 // Un USER ne voit que ses propres tickets, les autres rôles voient tout
-export function listTickets(user: CurrentUser, status?: TicketStatus) {
-  const onlyMine = user.role === "USER";
+export async function listTickets(user: CurrentUser, query: ListTicketsQuery) {
+  const { status, search, sortBy, order } = query;
 
-  return prisma.ticket.findMany({
-    where: {
-      ...(status ? { status } : {}),
-      ...(onlyMine ? { authorId: user.id } : {}),
-    },
-    orderBy: { createdAt: "desc" },
-    include: { author: authorFields },
-  });
+  const where: Prisma.TicketWhereInput = {
+    ...(status ? { status } : {}),
+    ...(user.role === "USER" ? { authorId: user.id } : {}),
+    // Recherche dans le titre ou la description, sans tenir compte des majuscules
+    ...(search
+      ? {
+          OR: [
+            { title: { contains: search, mode: "insensitive" } },
+            { description: { contains: search, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
+
+  // La page demandée et le nombre total, lus ensemble
+  const [tickets, total] = await prisma.$transaction([
+    prisma.ticket.findMany({
+      where,
+      // id en second critère : l'ordre reste stable quand deux tickets ont la même valeur
+      orderBy: [{ [sortBy]: order }, { id: order }],
+      include: { author: authorFields },
+      ...pageArgs(query),
+    }),
+    prisma.ticket.count({ where }),
+  ]);
+
+  return pageResult(tickets, total, query);
 }
 
 export async function getTicket(user: CurrentUser, id: number) {
