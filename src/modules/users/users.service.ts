@@ -88,3 +88,53 @@ export async function resendInvitation(manager: CurrentUser, id: number) {
 
   await sendInvitation(user.id, user.email);
 }
+
+// Retrouve un compte que la personne connectée a le droit de modifier, ou lève une erreur
+async function findManageableUser(manager: CurrentUser, id: number) {
+  // On ne modifie pas son propre compte : un admin ne doit pas pouvoir se bloquer ou se rétrograder par erreur
+  if (id === manager.id) throw new HttpError(400, "Tu ne peux pas modifier ton propre compte");
+
+  const user = await prisma.user.findUnique({ where: { id } });
+
+  if (!user) throw new HttpError(404, "Utilisateur introuvable");
+  if (!canManage(manager.role, user.role)) throw new HttpError(403, "Tu ne peux pas gérer ce compte");
+
+  return user;
+}
+
+// Désactiver ou réactiver un compte
+export async function setUserActive(manager: CurrentUser, id: number, isActive: boolean) {
+  await findManageableUser(manager, id);
+
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.update({
+      where: { id },
+      data: { isActive },
+      select: userFields,
+    });
+
+    // Un compte désactivé perd toutes ses sessions. Ses access tokens sont déjà refusés par authenticate.
+    if (!isActive) {
+      await tx.refreshToken.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
+
+    return user;
+  });
+}
+
+// Changer le rôle d'un compte
+export async function changeUserRole(manager: CurrentUser, id: number, role: Role) {
+  await findManageableUser(manager, id);
+
+  // Un ADMIN ne peut pas non plus donner un rôle qu'il ne gère pas (par exemple ADMIN)
+  if (!canManage(manager.role, role)) throw new HttpError(403, "Tu ne peux pas donner ce rôle");
+
+  return prisma.user.update({
+    where: { id },
+    data: { role },
+    select: userFields,
+  });
+}

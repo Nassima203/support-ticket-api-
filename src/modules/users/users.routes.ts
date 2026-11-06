@@ -11,3 +11,5 @@ usersRouter.use(authenticate, authorize("ADMIN", "SUPER_ADMIN"));
 usersRouter.post("/", usersController.create);
 usersRouter.get("/", usersController.list);
 usersRouter.post("/:id/resend-invitation", usersController.resendInvitation);
+usersRouter.patch("/:id/status", usersController.setStatus);
+usersRouter.patch("/:id/role", usersController.changeRole);

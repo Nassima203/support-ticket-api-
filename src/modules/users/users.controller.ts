@@ -6,7 +6,8 @@ import { parseId } from "../../lib/parse-id";
 import * as usersService from "./users.service";
 
 // Rôles qu'on peut donner par l'API (le SUPER_ADMIN n'est créé que par le seed)
-const CREATABLE_ROLES: Role[] = ["ADMIN", "AGENT", "USER"];
+const ASSIGNABLE_ROLES: Role[] = ["ADMIN", "AGENT", "USER"];
+const invalidRole = `Rôle invalide. Valeurs possibles : ${ASSIGNABLE_ROLES.join(", ")}`;
 
 // Vérification simple du format d'un email
 function isEmail(value: unknown): value is string {
@@ -22,8 +23,8 @@ export async function create(req: Request, res: Response) {
     throw new HttpError(400, "Un email valide est obligatoire");
   }
 
-  if (!CREATABLE_ROLES.includes(role)) {
-    throw new HttpError(400, `Rôle invalide. Valeurs possibles : ${CREATABLE_ROLES.join(", ")}`);
+  if (!ASSIGNABLE_ROLES.includes(role)) {
+    throw new HttpError(400, invalidRole);
   }
 
   const user = await usersService.createUser(req.user!, email, typeof name === "string" ? name : null, role);
@@ -41,4 +42,30 @@ export async function resendInvitation(req: Request, res: Response) {
   const id = parseId(req.params.id);
   await usersService.resendInvitation(req.user!, id);
   res.json({ message: "Invitation renvoyée" });
+}
+
+// PATCH /users/:id/status
+export async function setStatus(req: Request, res: Response) {
+  const id = parseId(req.params.id);
+  const { isActive } = req.body ?? {};
+
+  if (typeof isActive !== "boolean") {
+    throw new HttpError(400, "isActive doit être true ou false");
+  }
+
+  const user = await usersService.setUserActive(req.user!, id, isActive);
+  res.json(user);
+}
+
+// PATCH /users/:id/role
+export async function changeRole(req: Request, res: Response) {
+  const id = parseId(req.params.id);
+  const { role } = req.body ?? {};
+
+  if (!ASSIGNABLE_ROLES.includes(role)) {
+    throw new HttpError(400, invalidRole);
+  }
+
+  const user = await usersService.changeUserRole(req.user!, id, role);
+  res.json(user);
 }
