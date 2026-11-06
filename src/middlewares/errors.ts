@@ -6,9 +6,9 @@ export function notFound(_req: Request, res: Response) {
   res.status(404).json({ error: "Route introuvable" });
 }
 
-// Corps de requête illisible : express.json() lève une erreur de type "entity.parse.failed"
-function isInvalidJson(err: unknown): boolean {
-  return err instanceof SyntaxError && (err as { type?: string }).type === "entity.parse.failed";
+// Type des erreurs levées par express.json() : "entity.parse.failed", "entity.too.large"…
+function bodyErrorType(err: unknown): string | undefined {
+  return typeof err === "object" && err !== null ? (err as { type?: string }).type : undefined;
 }
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
@@ -18,8 +18,13 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return;
   }
 
-  if (isInvalidJson(err)) {
+  if (bodyErrorType(err) === "entity.parse.failed") {
     res.status(400).json({ error: "Le corps de la requête n'est pas un JSON valide" });
+    return;
+  }
+
+  if (bodyErrorType(err) === "entity.too.large") {
+    res.status(413).json({ error: "Le corps de la requête est trop gros (100 ko maximum)" });
     return;
   }
 
