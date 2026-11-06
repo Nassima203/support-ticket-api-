@@ -18,4 +18,6 @@ export const env = {
   RESEND_API_KEY: process.env.RESEND_API_KEY ?? "",
   EMAIL_FROM: process.env.EMAIL_FROM ?? "onboarding@resend.dev",
   APP_URL: process.env.APP_URL ?? "http://localhost:3000",
+  // Nombre maximum de requêtes par 15 minutes et par adresse IP, sur toute l'API
+  RATE_LIMIT_MAX: Number(process.env.RATE_LIMIT_MAX) || 300,
 };
