@@ -1,0 +1,621 @@
+openapi: 3.0.3
+info:
+  title: Support Ticket API
+  version: 1.0.0
+  license:
+    name: ISC
+  description: |
+    API de gestion de tickets de support, avec comptes sur invitation, connexion JWT,
+    4 rôles et journal d'audit.
+
+    **Connexion :** appelle `POST /auth/login`, copie `accessToken`, puis clique sur
+    **Authorize** et colle-le. Il est valable 15 minutes ; `POST /auth/refresh` en donne un nouveau.
+
+    **Rôles :** `SUPER_ADMIN` > `ADMIN` > `AGENT` > `USER`. Un ADMIN gère seulement les AGENT et les USER.
+    Personne ne peut modifier son propre compte. Le rôle SUPER_ADMIN n'est créé que par le seed.
+
+    **Erreurs :** toujours au format `{ "error": "message" }`.
+
+    **Limites :** 300 requêtes par 15 minutes et par IP sur toute l'API, 5 connexions ratées
+    et 5 demandes de réinitialisation par 15 minutes et par IP.
+servers:
+  - url: http://localhost:3000
+# Par défaut, toutes les routes demandent un access token. Les routes publiques le disent avec security: []
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+    description: Connexion, sessions, invitations et mot de passe
+  - name: Tickets
+    description: Création et suivi des tickets
+  - name: Users
+    description: Gestion des comptes (ADMIN et SUPER_ADMIN)
+  - name: Audit
+    description: Journal des actions sensibles (SUPER_ADMIN)
+
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      security: []
+      tags: [Auth]
+      summary: Se connecter
+      description: Limité à 5 échecs par 15 minutes et par IP. Même message pour un email inconnu et un mauvais mot de passe.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, example: admin@example.com }
+                password: { type: string, example: MotDePasse123 }
+      responses:
+        "200":
+          description: Connecté
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /auth/refresh:
+    post:
+      operationId: refreshTokens
+      security: []
+      tags: [Auth]
+      summary: Obtenir de nouveaux jetons
+      description: |
+        L'ancien refresh token est révoqué et remplacé (rotation). Si un refresh token déjà utilisé
+        revient, toutes les sessions du compte sont fermées.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshTokenBody" }
+      responses:
+        "200":
+          description: Nouveaux jetons
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/logout:
+    post:
+      operationId: logout
+      security: []
+      tags: [Auth]
+      summary: Se déconnecter
+      description: Révoque le refresh token. Répond pareil si le jeton est inconnu.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshTokenBody" }
+      responses:
+        "204": { description: Session fermée }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /auth/accept-invitation:
+    post:
+      operationId: acceptInvitation
+      security: []
+      tags: [Auth]
+      summary: Accepter une invitation et choisir son mot de passe
+      description: Le jeton vient du lien reçu par email. Valable 48 heures, une seule fois.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TokenWithPassword" }
+      responses:
+        "200":
+          description: Mot de passe enregistré
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /auth/forgot-password:
+    post:
+      operationId: forgotPassword
+      security: []
+      tags: [Auth]
+      summary: Demander un lien de réinitialisation
+      description: |
+        Toujours la même réponse, que le compte existe ou non. Le lien est valable 1 heure ;
+        une nouvelle demande annule l'ancien. Limité à 5 demandes par 15 minutes et par IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: Demande prise en compte
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /auth/reset-password:
+    post:
+      operationId: resetPassword
+      security: []
+      tags: [Auth]
+      summary: Choisir un nouveau mot de passe
+      description: Le lien ne sert qu'une fois. Toutes les sessions ouvertes sont fermées.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TokenWithPassword" }
+      responses:
+        "200":
+          description: Mot de passe modifié
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [Auth]
+      summary: Voir son propre compte
+      responses:
+        "200":
+          description: Le compte connecté
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /tickets:
+    post:
+      operationId: createTicket
+      tags: [Tickets]
+      summary: Créer un ticket
+      description: Tous les rôles. L'auteur est toujours la personne connectée.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 150, example: Impossible de me connecter }
+                description: { type: string, minLength: 1, maxLength: 5000, example: Erreur 500 sur la page de connexion }
+      responses:
+        "201":
+          description: Ticket créé
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      operationId: listTickets
+      tags: [Tickets]
+      summary: Lister les tickets
+      description: Un USER ne voit que ses propres tickets. Les autres rôles voient tout.
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/TicketStatus" }
+        - name: search
+          in: query
+          description: Cherche dans le titre et la description, sans tenir compte des majuscules
+          schema: { type: string, maxLength: 100 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - name: sortBy
+          in: query
+          schema: { type: string, enum: [createdAt, updatedAt, status, title], default: createdAt }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: Une page de tickets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Ticket" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /tickets/{id}:
+    get:
+      operationId: getTicket
+      tags: [Tickets]
+      summary: Afficher un ticket
+      description: Un USER reçoit 404 pour le ticket de quelqu'un d'autre.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Le ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /tickets/{id}/status:
+    patch:
+      operationId: updateTicketStatus
+      tags: [Tickets]
+      summary: Changer le statut d'un ticket
+      description: AGENT, ADMIN et SUPER_ADMIN.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: "#/components/schemas/TicketStatus" }
+      responses:
+        "200":
+          description: Ticket modifié
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /users:
+    post:
+      operationId: createUser
+      tags: [Users]
+      summary: Créer un compte et envoyer l'invitation
+      description: Le compte est créé sans mot de passe. Un ADMIN ne peut créer que des AGENT et des USER.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email, example: agent@example.com }
+                name: { type: string, maxLength: 100, nullable: true, example: Nina }
+                role: { $ref: "#/components/schemas/AssignableRole" }
+      responses:
+        "201":
+          description: Compte créé, invitation envoyée
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Un compte existe déjà avec cet email
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      operationId: listUsers
+      tags: [Users]
+      summary: Lister les comptes
+      parameters:
+        - name: role
+          in: query
+          schema: { $ref: "#/components/schemas/Role" }
+        - name: isActive
+          in: query
+          schema: { type: string, enum: ["true", "false"] }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Une page de comptes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/UserListItem" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /users/{id}/resend-invitation:
+    post:
+      operationId: resendInvitation
+      tags: [Users]
+      summary: Renvoyer une invitation
+      description: Crée un nouveau lien ; l'ancien ne marche plus.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Invitation renvoyée
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /users/{id}/status:
+    patch:
+      operationId: setUserStatus
+      tags: [Users]
+      summary: Désactiver ou réactiver un compte
+      description: |
+        Désactiver ferme toutes les sessions du compte et bloque ses access tokens tout de suite.
+        Enregistré dans le journal d'audit.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [isActive]
+              properties:
+                isActive: { type: boolean, example: false }
+      responses:
+        "200":
+          description: Compte modifié
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /users/{id}/role:
+    patch:
+      operationId: changeUserRole
+      tags: [Users]
+      summary: Changer le rôle d'un compte
+      description: Prend effet tout de suite. Enregistré dans le journal d'audit avec l'ancien et le nouveau rôle.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: "#/components/schemas/AssignableRole" }
+      responses:
+        "200":
+          description: Rôle modifié
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /audit-logs:
+    get:
+      operationId: listAuditLogs
+      tags: [Audit]
+      summary: Consulter le journal d'audit
+      description: SUPER_ADMIN seulement. Les actions les plus récentes d'abord.
+      parameters:
+        - name: action
+          in: query
+          schema: { $ref: "#/components/schemas/AuditAction" }
+        - name: actorId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: targetUserId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Une page du journal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditLog" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    BadRequest:
+      description: Données invalides
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "title et description sont obligatoires" }
+    Unauthorized:
+      description: Non connecté, jeton invalide ou compte désactivé
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "Connexion requise" }
+    Forbidden:
+      description: Rôle insuffisant
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "Action non autorisée pour ton rôle" }
+    NotFound:
+      description: Introuvable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "Ticket introuvable" }
+    TooManyRequests:
+      description: Trop de requêtes
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Message:
+      type: object
+      properties:
+        message: { type: string }
+    Role:
+      type: string
+      enum: [SUPER_ADMIN, ADMIN, AGENT, USER]
+    AssignableRole:
+      type: string
+      enum: [ADMIN, AGENT, USER]
+    TicketStatus:
+      type: string
+      enum: [OPEN, IN_PROGRESS, RESOLVED, CLOSED]
+    AuditAction:
+      type: string
+      enum: [USER_CREATED, USER_DEACTIVATED, USER_REACTIVATED, ROLE_CHANGED, PASSWORD_RESET]
+    RefreshTokenBody:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    TokenWithPassword:
+      type: object
+      required: [token, password]
+      properties:
+        token: { type: string, description: Jeton du lien reçu par email }
+        password: { type: string, minLength: 8, maxLength: 72 }
+    Tokens:
+      type: object
+      properties:
+        accessToken: { type: string, description: JWT valable 15 minutes }
+        refreshToken: { type: string, description: "Valable 7 jours, une seule utilisation" }
+    LoginResponse:
+      allOf:
+        - $ref: "#/components/schemas/Tokens"
+        - type: object
+          properties:
+            user:
+              type: object
+              properties:
+                id: { type: integer }
+                email: { type: string }
+                name: { type: string, nullable: true }
+                role: { $ref: "#/components/schemas/Role" }
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        email: { type: string }
+        name: { type: string, nullable: true }
+        role: { $ref: "#/components/schemas/Role" }
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    UserListItem:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          properties:
+            invitationPending: { type: boolean, description: true tant que l'invitation n'est pas acceptée }
+    Ticket:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        status: { $ref: "#/components/schemas/TicketStatus" }
+        authorId: { type: integer }
+        author:
+          type: object
+          properties:
+            id: { type: integer }
+            email: { type: string }
+            name: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Pagination:
+      type: object
+      properties:
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+        totalPages: { type: integer }
+    Person:
+      type: object
+      nullable: true
+      properties:
+        id: { type: integer }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+    AuditLog:
+      type: object
+      properties:
+        id: { type: integer }
+        action: { $ref: "#/components/schemas/AuditAction" }
+        actorId: { type: integer, nullable: true }
+        targetUserId: { type: integer, nullable: true }
+        actor: { $ref: "#/components/schemas/Person" }
+        targetUser: { $ref: "#/components/schemas/Person" }
+        details:
+          type: object
+          nullable: true
+          example: { from: USER, to: AGENT }
+        createdAt: { type: string, format: date-time }

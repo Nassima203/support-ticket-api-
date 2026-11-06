@@ -1,4 +1,6 @@
 import express from "express";
+import swaggerUi from "swagger-ui-express";
+import { openapiSpec } from "./docs/openapi";
 import { authRouter } from "./modules/auth/auth.routes";
 import { ticketsRouter } from "./modules/tickets/tickets.routes";
 import { usersRouter } from "./modules/users/users.routes";
@@ -13,6 +15,12 @@ app.use(apiLimiter);
 
 // Permet de lire le JSON envoyé dans le corps des requêtes (100 ko maximum)
 app.use(express.json({ limit: "100kb" }));
+
+// Documentation : Swagger UI sur /docs, le contrat brut sur /openapi.json
+app.get("/openapi.json", (_req, res) => {
+  res.json(openapiSpec);
+});
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
 // Les routes de connexion commencent par /auth
 app.use("/auth", authRouter);
