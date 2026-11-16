@@ -39,6 +39,54 @@ describe("POST /tickets", () => {
   });
 });
 
+describe("POST /tickets : limite par jour", () => {
+  // Crée directement en base des tickets pour ce compte, à la date voulue
+  async function seedTickets(authorId: number, count: number, createdAt = new Date()) {
+    await prisma.ticket.createMany({
+      data: Array.from({ length: count }, (_, i) => ({ title: `T${i}`, description: "x", authorId, createdAt })),
+    });
+  }
+
+  it("un USER reçoit 429 au 11e ticket en 24 heures, et rien n'est créé", async () => {
+    const { user, token } = await createUserAndLogin("USER");
+    await seedTickets(user.id, 10);
+
+    const res = await api().post("/tickets").set(auth(token)).send({ title: "Encore un", description: "x" });
+
+    expect(res.status).toBe(429);
+    expect(res.body.error).toContain("10 tickets maximum par 24 heures");
+    expect(await prisma.ticket.count({ where: { authorId: user.id } })).toBe(10);
+  });
+
+  it("les tickets de plus de 24 heures ne comptent pas", async () => {
+    const { user, token } = await createUserAndLogin("USER");
+    await seedTickets(user.id, 10, new Date(Date.now() - 25 * 60 * 60 * 1000));
+
+    const res = await api().post("/tickets").set(auth(token)).send({ title: "Nouveau", description: "x" });
+
+    expect(res.status).toBe(201);
+  });
+
+  it("la limite est propre à chaque compte", async () => {
+    const first = await createUserAndLogin("USER");
+    const second = await createUserAndLogin("USER");
+    await seedTickets(first.user.id, 10);
+
+    const res = await api().post("/tickets").set(auth(second.token)).send({ title: "Moi", description: "x" });
+
+    expect(res.status).toBe(201);
+  });
+
+  it.each(["AGENT", "ADMIN", "SUPER_ADMIN"] as const)("un %s n'est pas limité", async (role) => {
+    const { user, token } = await createUserAndLogin(role);
+    await seedTickets(user.id, 10);
+
+    const res = await api().post("/tickets").set(auth(token)).send({ title: "Interne", description: "x" });
+
+    expect(res.status).toBe(201);
+  });
+});
+
 describe("GET /tickets", () => {
   async function seed() {
     const alice = await createUserAndLogin("USER");

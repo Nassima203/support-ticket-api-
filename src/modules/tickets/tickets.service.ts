@@ -1,4 +1,5 @@
 import { Prisma, TicketStatus } from "@prisma/client";
+import { env } from "../../config/env";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../lib/http-error";
 import { pageArgs, pageResult } from "../../lib/pagination";
@@ -8,8 +9,30 @@ import { ListTicketsQuery } from "./tickets.schemas";
 // Ce qu'on renvoie de l'auteur d'un ticket (jamais son mot de passe)
 const authorFields = { select: { id: true, email: true, name: true } };
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+// Un USER ne peut pas créer plus de TICKETS_PER_USER_PER_DAY tickets sur les dernières 24 heures.
+// On compte dans la base (et pas en mémoire) : la limite tient même si le serveur redémarre.
+// AGENT, ADMIN et SUPER_ADMIN ne sont pas limités.
+async function checkDailyTicketLimit(user: CurrentUser) {
+  if (user.role !== "USER") return;
+
+  const createdLastDay = await prisma.ticket.count({
+    where: { authorId: user.id, createdAt: { gte: new Date(Date.now() - ONE_DAY_MS) } },
+  });
+
+  if (createdLastDay >= env.TICKETS_PER_USER_PER_DAY) {
+    throw new HttpError(
+      429,
+      `Limite atteinte : ${env.TICKETS_PER_USER_PER_DAY} tickets maximum par 24 heures. Réessaie plus tard.`,
+    );
+  }
+}
+
 // L'auteur est la personne connectée : on ne le demande pas dans le corps
-export function createTicket(user: CurrentUser, title: string, description: string) {
+export async function createTicket(user: CurrentUser, title: string, description: string) {
+  await checkDailyTicketLimit(user);
+
   return prisma.ticket.create({
     data: { title, description, authorId: user.id },
     include: { author: authorFields },

@@ -185,7 +185,10 @@ paths:
       operationId: createTicket
       tags: [Tickets]
       summary: Créer un ticket
-      description: Tous les rôles. L'auteur est toujours la personne connectée.
+      description: |
+        Tous les rôles. L'auteur est toujours la personne connectée.
+        Un compte USER peut créer au maximum TICKETS_PER_USER_PER_DAY tickets (10 par défaut)
+        sur les dernières 24 heures, sinon 429. AGENT, ADMIN et SUPER_ADMIN ne sont pas limités.
       requestBody:
         required: true
         content:
@@ -204,6 +207,7 @@ paths:
               schema: { $ref: "#/components/schemas/Ticket" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     get:
       operationId: listTickets
       tags: [Tickets]
