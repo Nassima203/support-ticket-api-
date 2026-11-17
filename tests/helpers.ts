@@ -21,7 +21,7 @@ export async function resetDatabase() {
   }
 
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "audit_logs", "password_reset_tokens", "refresh_tokens", "invitations", "tickets", "users" RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE "ai_calls", "ticket_messages", "audit_logs", "password_reset_tokens", "refresh_tokens", "invitations", "tickets", "users" RESTART IDENTITY CASCADE',
   );
   vi.mocked(sendEmail).mockClear();
 }
