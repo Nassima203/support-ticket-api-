@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../lib/http-error";
 import { pageArgs, pageResult } from "../../lib/pagination";
 import { CurrentUser } from "../../types/current-user";
+import { startAiReply } from "../ai/ai.service";
 import { ListTicketsQuery } from "./tickets.schemas";
 
 // Ce qu'on renvoie de l'auteur d'un ticket (jamais son mot de passe)
@@ -29,14 +30,22 @@ async function checkDailyTicketLimit(user: CurrentUser) {
   }
 }
 
-// L'auteur est la personne connectée : on ne le demande pas dans le corps
+// L'auteur est la personne connectée : on ne le demande pas dans le corps.
+// Si l'IA est activée, le ticket est créé en PENDING et l'IA répond en arrière-plan :
+// le client reçoit son 201 sans attendre l'IA.
 export async function createTicket(user: CurrentUser, title: string, description: string) {
   await checkDailyTicketLimit(user);
 
-  return prisma.ticket.create({
-    data: { title, description, authorId: user.id },
+  const ticket = await prisma.ticket.create({
+    data: { title, description, authorId: user.id, aiStatus: env.AI_ENABLED ? "PENDING" : "SKIPPED" },
     include: { author: authorFields },
   });
+
+  if (env.AI_ENABLED) {
+    startAiReply(ticket);
+  }
+
+  return ticket;
 }
 
 // Un USER ne voit que ses propres tickets, les autres rôles voient tout

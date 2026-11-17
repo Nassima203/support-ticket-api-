@@ -86,3 +86,27 @@ export async function replyToTicket(ticket: TicketForAi): Promise<AiStatus> {
     return "FAILED";
   }
 }
+
+// Lance la réponse de l'IA en arrière-plan : on ne l'attend pas,
+// le client reçoit son 201 tout de suite. Une erreur ici ne fait jamais planter le serveur.
+export function startAiReply(ticket: TicketForAi): void {
+  replyToTicket(ticket).catch((error: unknown) => {
+    const reason = error instanceof Error ? error.message : "erreur inconnue";
+    console.error(`[IA] Impossible de répondre au ticket ${ticket.id} : ${reason}`);
+  });
+}
+
+// Au démarrage du serveur : un ticket encore en PENDING ne recevra jamais sa réponse
+// (le serveur s'est arrêté pendant l'appel). On le passe en FAILED pour qu'un humain le prenne.
+// Renvoie le nombre de tickets débloqués.
+export async function failStuckAiReplies(): Promise<number> {
+  const [, tickets] = await prisma.$transaction([
+    prisma.aiCall.updateMany({
+      where: { status: "PENDING" },
+      data: { status: "FAILED", error: "Serveur redémarré pendant l'appel", finishedAt: new Date() },
+    }),
+    prisma.ticket.updateMany({ where: { aiStatus: "PENDING" }, data: { aiStatus: "FAILED" } }),
+  ]);
+
+  return tickets.count;
+}
